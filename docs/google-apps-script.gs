@@ -12,7 +12,6 @@
 var SHEETS = {
   Products: ["productId", "sku", "nameHe", "nameEn", "manufacturer", "category", "packageSize", "description", "marketingBenefits", "technicalData", "technicalStatus", "manufacturerUrl", "technicalSheetUrl", "productImageUrl", "createdAt", "updatedAt"],
   Projects: ["projectId", "projectName", "projectType", "productIds", "targetAudience", "visualStyle", "format", "status", "previewUrl", "exportUrl", "createdAt", "updatedAt"],
-  Sides: ["slideId", "projectId", "slideNumber", "title", "subtitle", "body", "technicalContent", "imageUrl", "layout", "duration", "createdAt"],
   Slides: ["slideId", "projectId", "slideNumber", "title", "subtitle", "body", "technicalContent", "imageUrl", "layout", "duration", "createdAt"],
   VideoProjects: ["videoId", "projectId", "title", "duration", "aspectRatio", "script", "storyboard", "videoPrompt", "provider", "outputUrl", "status", "createdAt"],
   MediaLibrary: ["mediaId", "fileName", "mediaType", "productId", "sourceType", "sourceUrl", "storageUrl", "licenseStatus", "createdAt"],
@@ -88,7 +87,6 @@ function openBook_(payload) {
 
 function ensureSheets_(book) {
   Object.keys(SHEETS).forEach(function (name) {
-    if (name === "Sides") return; // typo guard – real tab is Slides
     var sheet = book.getSheetByName(name) || book.insertSheet(name);
     var headers = SHEETS[name];
     var width = Math.max(sheet.getLastColumn(), headers.length);
