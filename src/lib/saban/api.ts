@@ -354,7 +354,12 @@ export const getStatus = createServerFn({ method: "GET" })
   .middleware([authMiddleware])
   .handler(async () => {
     const { integrationStatus, sheetsStatusQuiet } = await import("./sheets.server");
-    return { integrations: integrationStatus(), sheets: sheetsStatusQuiet() };
+    const { availableEngines } = await import("./ai.server");
+    return {
+      integrations: integrationStatus(),
+      sheets: sheetsStatusQuiet(),
+      engines: availableEngines(),
+    };
   });
 
 export const checkSheetsFn = createServerFn({ method: "POST" })
@@ -376,7 +381,7 @@ export const syncSheetsFn = createServerFn({ method: "POST" })
     const [products, projects, prompts, media, campaigns, knowledge] = await Promise.all([
       store.listProducts(context.userId),
       store.listProjects(context.userId),
-      store.listPrompts(context.userId), 
+      store.listPrompts(context.userId),
       store.listMedia(context.userId),
       store.listCampaigns(context.userId),
       store.listKnowledge(context.userId),
@@ -385,15 +390,79 @@ export const syncSheetsFn = createServerFn({ method: "POST" })
     return pushSnapshot({ products, projects, prompts, media, campaigns, knowledge });
   });
 
+/** Pull products & media from Google Sheet into Postgres (ADMIN only). */
+export const pullSheetsFn = createServerFn({ method: "POST" })
+  .middleware([authMiddleware])
+  .handler(async ({ context }) => {
+    const store = await import("./store.server");
+    const { member } = await store.contextFor(context.userId);
+    if (member.role !== "ADMIN") throw new Error("ייבוא מהגיליון שמור למנהל.");
+    store.rateLimit(context.userId, "sheets", 3);
+
+    const { pullSnapshot } = await import("./sheets.server");
+    const result = await pullSnapshot();
+    if (!result.ok) return result;
+
+    // Best-effort import of products if the script returned rows
+    if (Array.isArray(result.products) && result.products.length > 0) {
+      try {
+        const rows = result.products
+          .map((row) => {
+            const r = row as Record<string, unknown>;
+            return {
+              sku: String(r.sku ?? ""),
+              nameHe: String(r.nameHe ?? r.name ?? ""),
+              nameEn: r.nameEn ? String(r.nameEn) : undefined,
+              manufacturer: r.manufacturer ? String(r.manufacturer) : undefined,
+              category: r.category ? String(r.category) : undefined,
+              packageSize: r.packageSize ? String(r.packageSize) : undefined,
+              description: r.description ? String(r.description) : undefined,
+              marketingBenefits: r.marketingBenefits ? String(r.marketingBenefits) : undefined,
+              technicalData: r.technicalData ? String(r.technicalData) : undefined,
+              manufacturerUrl: r.manufacturerUrl ? String(r.manufacturerUrl) : undefined,
+              technicalSheetUrl: r.technicalSheetUrl ? String(r.technicalSheetUrl) : undefined,
+              productImageUrl: r.productImageUrl ? String(r.productImageUrl) : undefined,
+            };
+          })
+          .filter((r) => r.nameHe.length >= 2);
+
+        if (rows.length > 0) {
+          await store.importProducts(context.userId, rows);
+        }
+      } catch {
+        // Keep the pull result even if local import partially fails
+      }
+    }
+
+    return result;
+  });
+
 export const rewriteFn = createServerFn({ method: "POST" })
   .middleware([authMiddleware])
   .validator((input: unknown) =>
-    z.object({ draft: z.string().max(4000), instruction: z.string().max(400) }).parse(input),
+    z
+      .object({
+        draft: z.string().max(4000),
+        instruction: z.string().max(400),
+        engine: z.enum(["grok", "gemini"]).optional(),
+      })
+      .parse(input),
   )
   .handler(async ({ context, data }) => {
     const { rateLimit } = await import("./store.server");
     rateLimit(context.userId, "ai", 12);
-    const { grokRewrite } = await import("./ai.server");
-    return grokRewrite(data.draft, data.instruction);
+    const { rewriteText } = await import("./ai.server");
+    return rewriteText(data.draft, data.instruction, data.engine ?? "grok");
   });
 
+export const extractTdsFn = createServerFn({ method: "POST" })
+  .middleware([authMiddleware])
+  .validator((input: unknown) =>
+    z.object({ sourceText: z.string().min(20).max(14000) }).parse(input),
+  )
+  .handler(async ({ context, data }) => {
+    const { rateLimit } = await import("./store.server");
+    rateLimit(context.userId, "ai", 6);
+    const { geminiExtractTds } = await import("./gemini.server");
+    return geminiExtractTds(data.sourceText);
+  });

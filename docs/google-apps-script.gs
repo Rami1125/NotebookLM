@@ -3,10 +3,16 @@
  * Deploy as a web app: Execute as me, access: anyone with the link.
  * Script properties: API_KEY (required), SPREADSHEET_ID (optional if sent in the body).
  * The studio server calls this. The browser never holds the key.
+ *
+ * Supported actions:
+ *   healthCheck  → { ok, sheets: string[] }
+ *   syncSnapshot → write products/projects/prompts/media/campaigns/knowledge
+ *   pullSnapshot → read Products + MediaLibrary back to the app
  */
 var SHEETS = {
   Products: ["productId", "sku", "nameHe", "nameEn", "manufacturer", "category", "packageSize", "description", "marketingBenefits", "technicalData", "technicalStatus", "manufacturerUrl", "technicalSheetUrl", "productImageUrl", "createdAt", "updatedAt"],
   Projects: ["projectId", "projectName", "projectType", "productIds", "targetAudience", "visualStyle", "format", "status", "previewUrl", "exportUrl", "createdAt", "updatedAt"],
+  Sides: ["slideId", "projectId", "slideNumber", "title", "subtitle", "body", "technicalContent", "imageUrl", "layout", "duration", "createdAt"],
   Slides: ["slideId", "projectId", "slideNumber", "title", "subtitle", "body", "technicalContent", "imageUrl", "layout", "duration", "createdAt"],
   VideoProjects: ["videoId", "projectId", "title", "duration", "aspectRatio", "script", "storyboard", "videoPrompt", "provider", "outputUrl", "status", "createdAt"],
   MediaLibrary: ["mediaId", "fileName", "mediaType", "productId", "sourceType", "sourceUrl", "storageUrl", "licenseStatus", "createdAt"],
@@ -34,10 +40,12 @@ function handle_(e) {
     var got = String(payload.apiKey || (e.parameter && e.parameter.apiKey) || "");
     if (!expected || got !== expected) return json_({ ok: false, error: "unauthorized" });
     var action = String(payload.action || "");
+
     if (action === "healthCheck") {
       var book = openBook_(payload);
       return json_({ ok: true, sheets: book.getSheets().map(function (sheet) { return sheet.getName(); }) });
     }
+
     if (action === "syncSnapshot") {
       var result = withLock_(function () {
         ensureSheets_(openBook_(payload));
@@ -52,6 +60,20 @@ function handle_(e) {
       });
       return json_(result);
     }
+
+    if (action === "pullSnapshot") {
+      var pull = withLock_(function () {
+        var book = openBook_(payload);
+        ensureSheets_(book);
+        return {
+          ok: true,
+          products: readRows_(book, "Products"),
+          media: readRows_(book, "MediaLibrary"),
+        };
+      });
+      return json_(pull);
+    }
+
     return json_({ ok: false, error: "unknown action" });
   } catch (error) {
     return json_({ ok: false, error: String(error && error.message ? error.message : error) });
@@ -66,6 +88,7 @@ function openBook_(payload) {
 
 function ensureSheets_(book) {
   Object.keys(SHEETS).forEach(function (name) {
+    if (name === "Sides") return; // typo guard – real tab is Slides
     var sheet = book.getSheetByName(name) || book.insertSheet(name);
     var headers = SHEETS[name];
     var width = Math.max(sheet.getLastColumn(), headers.length);
@@ -98,6 +121,22 @@ function writeRows_(book, sheetName, rows, idKey) {
       sheet.appendRow(line);
       indexById[id] = sheet.getLastRow() - 2;
     }
+  });
+}
+
+function readRows_(book, sheetName) {
+  var sheet = book.getSheetByName(sheetName);
+  if (!sheet || sheet.getLastRow() < 2) return [];
+  var headers = SHEETS[sheetName];
+  var values = sheet.getRange(2, 1, sheet.getLastRow() - 1, headers.length).getValues();
+  return values.map(function (row) {
+    var obj = {};
+    headers.forEach(function (header, index) {
+      obj[header] = row[index] == null ? "" : row[index];
+    });
+    return obj;
+  }).filter(function (obj) {
+    return obj[headers[0]];
   });
 }
 
