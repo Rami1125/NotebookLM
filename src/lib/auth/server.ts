@@ -228,7 +228,7 @@ export const auth = betterAuth({
     cookies: {
       session_token: { name: SESSION_TOKEN_COOKIE },
       session_data: { name: "__Host-grok-auth.session_data" },
-      account_data: { name: "__Host-grok-auth.account_data" },
+      account_data: { name: "__Host-grok-auth.account_data" }, 
       dont_remember: { name: "__Host-grok-auth.dont_remember" },
     },
   },
