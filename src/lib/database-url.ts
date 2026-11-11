@@ -3,7 +3,7 @@
  *
  * Priority:
  * 1. DATABASE_URL (explicit / Neon-style)
- * 2. POSTGRES_URL (Vercel ↔ Supabase integration, pooled)
+ * 2. POSTGRES_URL (Vercel \u2194 Supabase integration, pooled)
  * 3. POSTGRES_URL_NON_POOLING (direct)
  * 4. POSTGRES_PRISMA_URL (last resort)
  *
