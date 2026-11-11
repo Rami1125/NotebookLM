@@ -1,5 +1,5 @@
 import { pendingMigrations } from "../../scripts/migration-plan.mjs";
-import { resolveDatabaseUrl } from "./database-url";
+import { postgresPoolConfig, resolveDatabaseUrl } from "./database-url";
 
 /** Which database backend is active. */
 export type DbSource = "neon" | "pglite";
@@ -10,20 +10,13 @@ const databaseUrl = resolveDatabaseUrl(
 );
 
 /**
- * Active backend: real **Neon** when a Postgres URL is set (deployed / configured
- * sandbox), otherwise a local embedded **PGLite** (Postgres compiled to WASM) so
- * the app has a working database even with nothing configured \u2014 the live preview
- * included. Vercel Supabase integration sets POSTGRES_URL automatically.
+ * Active backend: real **Postgres** when a connection string is set (deployed /
+ * Supabase / Neon), otherwise a local embedded **PGLite**.
  */
 export const dbSource: DbSource = databaseUrl ? "neon" : "pglite";
 
 /**
- * Minimal shared SQL surface, satisfied by both Neon and PGLite. Both the
- * tagged-template and `.query()` forms resolve to an array of row objects:
- *
- *   const sql = await getSql();
- *   const rows = await sql`select * from todos where id = ${id}`; // parameterized
- *   const rows2 = await sql.query("select * from todos where id = $1", [id]);
+ * Minimal shared SQL surface, satisfied by both Neon and PGLite.
  */
 export interface Sql {
   <T = Record<string, unknown>>(
@@ -36,16 +29,9 @@ export interface Sql {
   ): Promise<T[]>;
 }
 
-/**
- * Result of a one-time backend init. Kept on `globalThis` so Vite SSR HMR reloads
- * of this module still reuse the same Pool / PGlite instance (and the same applied
- * migrations) for the life of the process.
- *
- * The Promise itself is also cached: concurrent `getSql()` callers during the first
- * init share one init in flight rather than each starting their own (and racing on
- * `pendingMigrations`). A failed init clears its slot so the next call retries.
- */
-type Backend = { kind: "neon"; sql: Sql } | { kind: "pglite"; sql: Sql; driver: import("@electric-sql/pglite").PGlite };
+type Backend =
+  | { kind: "neon"; sql: Sql }
+  | { kind: "pglite"; sql: Sql; driver: import("@electric-sql/pglite").PGlite };
 
 const globalBoot = globalThis as typeof globalThis & {
   __pgBackendPromise__?: Promise<Backend>;
@@ -54,16 +40,14 @@ const globalBoot = globalThis as typeof globalThis & {
 
 function isConnectionError(err: unknown): boolean {
   const msg = err instanceof Error ? err.message : String(err);
-  return /ECONNREFUSED|ENOTFOUND|ETIMEDOUT|connection terminated|Connection terminated|password authentication failed|SSL/i.test(
+  return /ECONNREFUSED|ENOTFOUND|ETIMEDOUT|connection terminated|Connection terminated|password authentication failed|SELF_SIGNED_CERT|certificate/i.test(
     msg,
   );
 }
 
-/**
- * Tagged-template + `.query()` wrapper over a row-returning async function.
- * Shared by both backends so the rest of the app never branches on driver.
- */
-function makeSql(run: (text: string, params: unknown[]) => Promise<Record<string, unknown>[]>): Sql {
+function makeSql(
+  run: (text: string, params: unknown[]) => Promise<Record<string, unknown>[]>,
+): Sql {
   async function query<T = Record<string, unknown>>(
     text: string,
     params: unknown[] = [],
@@ -89,7 +73,8 @@ function makeSql(run: (text: string, params: unknown[]) => Promise<Record<string
 
 async function initNeon(connectionString: string): Promise<Backend> {
   const { default: pg } = await import("pg");
-  const pool = new pg.Pool({ connectionString });
+  // SSL: Supabase on Vercel triggers SELF_SIGNED_CERT_IN_CHAIN without this.
+  const pool = new pg.Pool(postgresPoolConfig(connectionString));
   const sql = makeSql(async (text, params) => {
     const result = await pool.query(text, params);
     return result.rows as Record<string, unknown>[];
@@ -100,7 +85,6 @@ async function initNeon(connectionString: string): Promise<Backend> {
 async function initPglite(): Promise<Backend> {
   const { PGlite } = await import("@electric-sql/pglite");
   const driver = new PGlite();
-  // Apply pending migrations once per process for the in-memory preview DB.
   for (const migration of pendingMigrations as { id?: string; sql: string }[]) {
     try {
       await driver.exec(migration.sql);
@@ -140,12 +124,7 @@ function getBackend(): Promise<Backend> {
   return globalBoot.__pgBackendPromise__;
 }
 
-/**
- * Get the shared, **server-only** SQL client. Postgres when a connection string
- * is set (DATABASE_URL or Vercel Supabase POSTGRES_URL), otherwise PGLite.
- *
- * Throws when called in the browser bundle.
- */
+/** Get the shared, server-only SQL client. */
 export function getSql(): Promise<Sql> {
   if (typeof window !== "undefined") {
     return Promise.reject(
@@ -158,9 +137,7 @@ export function getSql(): Promise<Sql> {
   return getBackend().then((b) => b.sql);
 }
 
-/**
- * PGLite instance (preview / no connection string path).
- */
+/** PGLite instance (preview / fallback path). */
 export async function getPglite(): Promise<import("@electric-sql/pglite").PGlite> {
   const backend = await getBackend();
   if (backend.kind !== "pglite") {
@@ -171,16 +148,11 @@ export async function getPglite(): Promise<import("@electric-sql/pglite").PGlite
   return backend.driver;
 }
 
-/**
- * Ensure the database backend is ready (and migrations applied for PGLite).
- * Safe to call multiple times; concurrent callers share one init.
- */
+/** Ensure the database backend is ready. */
 export function ensureDbReady(): Promise<void> {
   return getSql().then(() => undefined);
 }
 
-// Eager bootstrap on the server so the first request does not pay full init cost.
-// Node only. Client bundles never hit this path (`getSql` throws in the browser).
 if (typeof window === "undefined") {
   globalBoot.__pgBootstrapPromise__ ??= ensureDbReady().catch((err) => {
     console.error("[db] bootstrap failed:", err instanceof Error ? err.message : err);
