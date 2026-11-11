@@ -1,0 +1,1 @@
+import{d as e}from"./createLucideIcon-CcfQz_FV.js";import{h as t,i as n,n as r,t as i}from"./shell-Bcefs5pN.js";import{d as a}from"./index-BQUzQUGQ.js";var o=e();function s(){let{user:e,isPending:s}=t();return s?(0,o.jsx)(i,{}):e?(0,o.jsx)(n,{children:(0,o.jsx)(a,{})}):(0,o.jsx)(r,{})}export{s as component};

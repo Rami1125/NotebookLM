@@ -1,0 +1,1 @@
+import{n as e}from"./shell-Bcefs5pN.js";var t=e;export{t as component};

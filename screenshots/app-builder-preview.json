@@ -1,0 +1,36 @@
+{
+  "url": "http://127.0.0.1:8080/",
+  "viewports": {
+    "desktop": {
+      "width": 1280,
+      "height": 800,
+      "status": 200,
+      "title": "SABAN CREATIVE STUDIO",
+      "hasCanvas": false,
+      "bodyTextLen": 57,
+      "bodyTextHash": "be23463a38bbbe73569af22643fb9f86f586ec3184f1e3ee2c4878eb67e68cae",
+      "bodyTextPrefix": "SABAN CREATIVE STUDIO ח. סבן חומרי בניין טוען את הסטודיו…",
+      "horizontalOverflow": false,
+      "consoleErrors": [],
+      "pageErrors": [],
+      "screenshot": "/workspace/screenshots/app-builder-preview.png"
+    },
+    "mobile": {
+      "width": 390,
+      "height": 844,
+      "status": 200,
+      "title": "Loading http://127.0.0.1:8080/",
+      "hasCanvas": false,
+      "bodyTextLen": 57,
+      "bodyTextHash": "be23463a38bbbe73569af22643fb9f86f586ec3184f1e3ee2c4878eb67e68cae",
+      "bodyTextPrefix": "SABAN CREATIVE STUDIO ח. סבן חומרי בניין טוען את הסטודיו…",
+      "horizontalOverflow": false,
+      "consoleErrors": [],
+      "pageErrors": [],
+      "screenshot": "/workspace/screenshots/app-builder-preview-mobile.png"
+    }
+  },
+  "brandWarnings": [],
+  "authWarnings": [],
+  "verdictFile": "/workspace/screenshots/app-builder-preview.json"
+}
