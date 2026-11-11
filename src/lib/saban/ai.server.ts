@@ -1,3 +1,5 @@
+import { geminiRewrite, isGeminiConfigured, type AiEngine } from "./gemini.server";
+
 const SYSTEM = [
   "אתה עורך תוכן של ח. סבן חומרי בניין.",
   "כתוב עברית מקצועית, קצרה וברורה.",
@@ -6,7 +8,14 @@ const SYSTEM = [
   "אל תוסיף מחיר.",
 ].join(" ");
 
-export async function grokRewrite(draft: string, instruction: string): Promise<{ ok: true; text: string } | { ok: false; error: string }> {
+export type RewriteResult =
+  | { ok: true; text: string; engine: AiEngine }
+  | { ok: false; error: string; engine?: AiEngine };
+
+export async function grokRewrite(
+  draft: string,
+  instruction: string,
+): Promise<{ ok: true; text: string } | { ok: false; error: string }> {
   const apiKey = process.env.XAI_API_KEY;
   if (!apiKey) return { ok: false, error: "ספק Grok לא זמין בסביבה זו." };
   const trimmed = draft.trim();
@@ -39,4 +48,36 @@ export async function grokRewrite(draft: string, instruction: string): Promise<{
   } catch {
     return { ok: false, error: "לא הצלחנו להגיע לספק הטקסט." };
   }
+}
+
+/**
+ * Unified rewrite entry — choose engine explicitly.
+ * Falls back to the other engine only when the requested one is unavailable
+ * and the caller did not force a specific engine.
+ */
+export async function rewriteText(
+  draft: string,
+  instruction: string,
+  engine: AiEngine = "grok",
+): Promise<RewriteResult> {
+  if (engine === "gemini") {
+    if (!isGeminiConfigured()) {
+      return { ok: false, error: "Gemini לא מוגדר (חסר GEMINI_API_KEY).", engine: "gemini" };
+    }
+    const result = await geminiRewrite(draft, instruction);
+    if (!result.ok) return { ok: false, error: result.error, engine: "gemini" };
+    return { ok: true, text: result.text, engine: "gemini" };
+  }
+
+  // default: grok
+  const result = await grokRewrite(draft, instruction);
+  if (!result.ok) return { ok: false, error: result.error, engine: "grok" };
+  return { ok: true, text: result.text, engine: "grok" };
+}
+
+export function availableEngines(): { grok: boolean; gemini: boolean } {
+  return {
+    grok: Boolean(process.env.XAI_API_KEY?.trim()),
+    gemini: isGeminiConfigured(),
+  };
 }
