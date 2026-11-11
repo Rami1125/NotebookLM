@@ -2,13 +2,10 @@
  * Resolve the Postgres connection string for deploy.
  *
  * Priority:
- * 1. DATABASE_URL (explicit / Neon-style)
+ * 1. DATABASE_URL (explicit)
  * 2. POSTGRES_URL (Vercel \u2194 Supabase integration, pooled)
  * 3. POSTGRES_URL_NON_POOLING (direct)
  * 4. POSTGRES_PRISMA_URL (last resort)
- *
- * Empty/whitespace values are treated as unset so we never pass a blank string
- * into `pg` / Better Auth.
  */
 export function resolveDatabaseUrl(
   env: NodeJS.ProcessEnv = process.env,
@@ -25,4 +22,26 @@ export function resolveDatabaseUrl(
     if (value) return value;
   }
   return undefined;
+}
+
+/**
+ * pg Pool config for Supabase / Vercel.
+ * Supabase terminates TLS with a cert chain Node may not trust in serverless
+ * (SELF_SIGNED_CERT_IN_CHAIN). rejectUnauthorized:false is the standard
+ * approach for managed Postgres over require-SSL links.
+ */
+export function postgresPoolConfig(connectionString: string): {
+  connectionString: string;
+  ssl: { rejectUnauthorized: boolean } | undefined;
+} {
+  const url = connectionString.trim();
+  const needsSsl =
+    /supabase\.co|pooler\.supabase|sslmode=require|ssl=true/i.test(url) ||
+    process.env.PGSSLMODE === "require" ||
+    process.env.NODE_ENV === "production";
+
+  return {
+    connectionString: url,
+    ssl: needsSsl ? { rejectUnauthorized: false } : undefined,
+  };
 }
