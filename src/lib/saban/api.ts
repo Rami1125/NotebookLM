@@ -376,7 +376,7 @@ export const syncSheetsFn = createServerFn({ method: "POST" })
     const [products, projects, prompts, media, campaigns, knowledge] = await Promise.all([
       store.listProducts(context.userId),
       store.listProjects(context.userId),
-      store.listPrompts(context.userId),
+      store.listPrompts(context.userId), 
       store.listMedia(context.userId),
       store.listCampaigns(context.userId),
       store.listKnowledge(context.userId),
