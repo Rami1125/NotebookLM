@@ -390,7 +390,6 @@ export const syncSheetsFn = createServerFn({ method: "POST" })
     return pushSnapshot({ products, projects, prompts, media, campaigns, knowledge });
   });
 
-/** Pull products & media from Google Sheet into Postgres (ADMIN only). */
 export const pullSheetsFn = createServerFn({ method: "POST" })
   .middleware([authMiddleware])
   .handler(async ({ context }) => {
@@ -403,7 +402,6 @@ export const pullSheetsFn = createServerFn({ method: "POST" })
     const result = await pullSnapshot();
     if (!result.ok) return result;
 
-    // Best-effort import of products if the script returned rows
     if (Array.isArray(result.products) && result.products.length > 0) {
       try {
         const rows = result.products
@@ -430,7 +428,7 @@ export const pullSheetsFn = createServerFn({ method: "POST" })
           await store.importProducts(context.userId, rows);
         }
       } catch {
-        // Keep the pull result even if local import partially fails
+        /* keep pull result */
       }
     }
 
@@ -465,4 +463,21 @@ export const extractTdsFn = createServerFn({ method: "POST" })
     rateLimit(context.userId, "ai", 6);
     const { geminiExtractTds } = await import("./gemini.server");
     return geminiExtractTds(data.sourceText);
+  });
+
+/** Public bootstrap status — does not reveal the secret. */
+export const bootstrapStatusFn = createServerFn({ method: "GET" }).handler(async () => {
+  const { isBootstrapConfigured } = await import("./bootstrap.server");
+  return { configured: isBootstrapConfigured() };
+});
+
+/**
+ * Creates/ensures ראמי as ADMIN and signs him in when the bootstrap secret matches.
+ * No auth middleware — gated solely by SABAN_BOOTSTRAP_SECRET.
+ */
+export const bootstrapRamiFn = createServerFn({ method: "POST" })
+  .validator((input: unknown) => z.object({ secret: z.string().min(8).max(200) }).parse(input))
+  .handler(async ({ data }) => {
+    const { bootstrapRamiAdmin } = await import("./bootstrap.server");
+    return bootstrapRamiAdmin(data.secret);
   });
