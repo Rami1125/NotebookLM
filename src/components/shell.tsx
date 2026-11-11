@@ -15,8 +15,8 @@ import {
   Presentation,
   Boxes,
 } from "lucide-react";
-import { useEffect, useState, type FormEvent, type ReactNode } from "react";
-import { authClient, GROK_PROVIDERS, signIn } from "@/lib/auth/client";
+import { useState, type FormEvent, type ReactNode } from "react";
+import { authClient } from "@/lib/auth/client";
 import { UserButton } from "@/lib/auth/gates";
 import { useCurrentUserState } from "@/lib/auth/use-current-user";
 import { cx } from "./kit";
@@ -50,111 +50,148 @@ export function BootScreen() {
 }
 
 export function LoginPanel() {
-  const [name, setName] = useState("ראמי מסארווה");
-  const [email, setEmail] = useState("rami.msarwa1@gmail.com");
+  const [name, setName] = useState("");
+  const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [mode, setMode] = useState<"in" | "up">("up");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
-  const [showOauth, setShowOauth] = useState(false);
-
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    const host = window.location.hostname;
-    const isVercel = host.endsWith(".vercel.app") || host === "notebook-lm-navy.vercel.app";
-    setShowOauth(!isVercel);
-  }, []);
 
   async function submitEmail(event: FormEvent) {
     event.preventDefault();
     setBusy(true);
     setError("");
-    const result =
-      mode === "up"
-        ? await authClient.signUp.email({
-            name: name || "ראמי מסארווה",
-            email,
-            password,
-            callbackURL: "/",
-          })
-        : await authClient.signIn.email({ email, password, callbackURL: "/" });
-    setBusy(false);
-    if (result.error) {
-      setError(result.error.message || "הכניסה נכשלה");
-      return;
+    try {
+      const result =
+        mode === "up"
+          ? await authClient.signUp.email({
+              name: name.trim() || email.split("@")[0] || "משתמש",
+              email: email.trim(),
+              password,
+              callbackURL: "/",
+            })
+          : await authClient.signIn.email({
+              email: email.trim(),
+              password,
+              callbackURL: "/",
+            });
+      if (result.error) {
+        setError(result.error.message || "הפעולה נכשלה");
+        setBusy(false);
+        return;
+      }
+      window.location.assign("/");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "שגיאת רשת");
+      setBusy(false);
     }
-    window.location.assign("/");
   }
 
   return (
     <main className="grid min-h-screen place-items-center bg-paper px-4 py-8 text-ink">
-      <div className="w-full max-w-md rounded-3xl border border-line bg-surface p-6">
+      <div className="w-full max-w-md rounded-3xl border border-line bg-surface p-6 shadow-sm">
         <p className="text-xs font-medium tracking-[0.16em] text-accent">SABAN CREATIVE STUDIO</p>
-        <h1 className="mt-2 text-2xl font-semibold">כניסה לסטודיו</h1>
+        <h1 className="mt-2 text-2xl font-semibold">
+          {mode === "up" ? "הרשמת משתמש חדש" : "התחברות לסטודיו"}
+        </h1>
         <p className="mt-2 text-sm leading-6 text-muted">
-          התחברות בדוא״ל וסיסמה. המשתמש הראשון, וכתובת rami.msarwa1@gmail.com, מקבלים תפקיד מנהל.
-          כניסת Google / X אינה זמינה בפריסת Vercel.
+          ח. סבן חומרי בניין (1994) בע״מ — כניסה בדוא״ל וסיסמה בלבד. המשתמש הראשון במערכת
+          מקבל תפקיד מנהל.
         </p>
-        <form className="mt-5 grid gap-2" onSubmit={(event) => void submitEmail(event)}>
-          {mode === "up" ? (
-            <input
-              className="min-h-11 rounded-lg border border-line bg-paper px-3 text-sm"
-              placeholder="שם"
-              value={name}
-              onChange={(event) => setName(event.target.value)}
-            />
-          ) : null}
-          <input
-            className="min-h-11 rounded-lg border border-line bg-paper px-3 text-sm"
-            type="email"
-            required
-            placeholder="דוא״ל"
-            value={email}
-            onChange={(event) => setEmail(event.target.value)}
-          />
-          <input
-            className="min-h-11 rounded-lg border border-line bg-paper px-3 text-sm"
-            type="password"
-            required
-            minLength={8}
-            placeholder="סיסמה, 8 תווים לפחות"
-            value={password}
-            onChange={(event) => setPassword(event.target.value)}
-          />
-          {error ? <p className="text-sm text-danger">{error}</p> : null}
+
+        <div className="mt-4 grid grid-cols-2 gap-2 rounded-xl bg-paper p-1">
           <button
-            type="submit"
-            disabled={busy}
-            className="min-h-11 rounded-lg bg-primary px-4 text-sm font-medium text-primary-fg disabled:opacity-50"
+            type="button"
+            className={
+              mode === "up"
+                ? "min-h-10 rounded-lg bg-primary px-3 text-sm font-medium text-primary-fg"
+                : "min-h-10 rounded-lg px-3 text-sm text-muted"
+            }
+            onClick={() => {
+              setMode("up");
+              setError("");
+            }}
           >
-            {busy ? "רגע…" : mode === "up" ? "פתיחת חשבון" : "כניסה"}
+            הרשמה
           </button>
           <button
             type="button"
-            className="min-h-11 text-sm text-muted"
-            onClick={() => setMode(mode === "up" ? "in" : "up")}
+            className={
+              mode === "in"
+                ? "min-h-10 rounded-lg bg-primary px-3 text-sm font-medium text-primary-fg"
+                : "min-h-10 rounded-lg px-3 text-sm text-muted"
+            }
+            onClick={() => {
+              setMode("in");
+              setError("");
+            }}
           >
-            {mode === "up" ? "כבר יש חשבון? כניסה" : "אין חשבון? פתיחה"}
+            התחברות
+          </button>
+        </div>
+
+        <form className="mt-4 grid gap-3" onSubmit={(event) => void submitEmail(event)} noValidate>
+          {mode === "up" ? (
+            <label className="grid gap-1 text-sm">
+              <span className="font-medium">שם מלא</span>
+              <input
+                className="min-h-11 rounded-lg border border-line bg-paper px-3 text-sm"
+                name="name"
+                autoComplete="name"
+                placeholder="לדוגמה: ראמי מסארווה"
+                value={name}
+                onChange={(event) => setName(event.target.value)}
+              />
+            </label>
+          ) : null}
+
+          <label className="grid gap-1 text-sm">
+            <span className="font-medium">דוא״ל</span>
+            <input
+              className="min-h-11 rounded-lg border border-line bg-paper px-3 text-sm"
+              type="email"
+              name="email"
+              autoComplete="email"
+              required
+              placeholder="name@example.com"
+              value={email}
+              onChange={(event) => setEmail(event.target.value)}
+            />
+          </label>
+
+          <label className="grid gap-1 text-sm">
+            <span className="font-medium">סיסמה</span>
+            <input
+              className="min-h-11 rounded-lg border border-line bg-paper px-3 text-sm"
+              type="password"
+              name="password"
+              autoComplete={mode === "up" ? "new-password" : "current-password"}
+              required
+              minLength={8}
+              placeholder="לפחות 8 תווים"
+              value={password}
+              onChange={(event) => setPassword(event.target.value)}
+            />
+          </label>
+
+          {error ? (
+            <p className="rounded-lg bg-danger-soft px-3 py-2 text-sm text-danger" role="alert">
+              {error}
+            </p>
+          ) : null}
+
+          <button
+            type="submit"
+            disabled={busy || !email.trim() || password.length < 8}
+            className="min-h-11 rounded-lg bg-primary px-4 text-sm font-medium text-primary-fg disabled:opacity-50"
+          >
+            {busy ? "מעבד…" : mode === "up" ? "יצירת חשבון והתחברות" : "התחברות"}
           </button>
         </form>
-        {showOauth ? (
-          <div className="mt-4 grid gap-2">
-            {GROK_PROVIDERS.map((provider) => (
-              <button
-                key={provider.providerId}
-                type="button"
-                onClick={() => signIn(provider.providerId, { callbackURL: "/" })}
-                className="min-h-11 rounded-lg border border-line bg-paper px-4 text-sm font-medium hover:bg-accent-soft"
-              >
-                המשך עם {provider.label}
-              </button>
-            ))}
-          </div>
-        ) : (
-          <p className="mt-4 rounded-xl bg-paper px-3 py-2 text-xs leading-5 text-muted">
-            כפתורי Google / X כבויים כאן בכוונה. השתמשו בטופס הדוא״ל והסיסמה למעלה.
-          </p>
-        )}
+
+        <p className="mt-4 text-xs leading-5 text-muted">
+          כניסת Google / X אינה זמינה בפריסה זו. השתמשו בטופס למעלה בלבד.
+        </p>
       </div>
     </main>
   );
