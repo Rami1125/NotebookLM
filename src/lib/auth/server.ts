@@ -81,19 +81,25 @@ const grokIssuer = env("GROK_AUTH_ISSUER") ?? GROK_ISSUER_DEFAULT;
 const grokClientId = env("GROK_AUTH_CLIENT_ID") ?? PREVIEW_CLIENT_ID;
 const grokClientSecret = env("GROK_AUTH_CLIENT_SECRET") ?? PREVIEW_CLIENT_SECRET;
 
-/** True when federated sign-in is active (real auth is enforced). */
+/** True when this process has usable broker credentials (deployed or preview). */
 export const authConfigured =
   !authDisabled && Boolean(grokClientId && grokClientSecret);
 
 // This app's own Better Auth origin. When deployed the deployer injects the
-// public URL. In the sandbox live preview there's no fixed URL (each preview gets
-// a dynamic `*.grok-sandbox.com` host), so we hand Better Auth a dynamic baseURL:
+// public URL via BETTER_AUTH_URL; in the sandbox live preview there is no fixed
+// URL (each reopen gets a dynamic `*.grok-sandbox.com` host), so we hand Better Auth a dynamic baseURL:
 // it derives the origin per-request from the (proxied) host, validated against the
 // preview allowlist, which makes the OAuth `redirect_uri` the concrete preview URL
 // the broker's preview client accepts.
 const vercelHost = env("VERCEL_URL");
-const vercelOrigin = vercelHost ? `https://${vercelHost}` : undefined;
-const explicitBaseURL = env("BETTER_AUTH_URL") ?? vercelOrigin;
+const vercelOrigin = vercelHost
+  ? `https://${vercelHost.replace(/\/+$/, "")}`
+  : undefined;
+// Strip trailing slash — Better Auth origin checks are exact-match sensitive.
+const explicitBaseURL = (env("BETTER_AUTH_URL") ?? vercelOrigin)?.replace(
+  /\/+$/,
+  "",
+);
 
 // Explicit string[] — Better Auth's DynamicBaseURLConfig
 // requires a mutable allowedHosts: string[].
@@ -115,17 +121,57 @@ const baseURL = explicitBaseURL ?? {
   fallback: "http://localhost:8080",
 };
 
-// Origins Better Auth accepts on credentialed POSTs (sign-up/sign-in, etc.).
-// Supports explicit URL, dynamic Vercel deployments (*.vercel.app), preview sandbox and localhost.
-const trustedOrigins: string[] = [
+const STATIC_TRUSTED_ORIGINS: string[] = [
+  "https://notebook-lm-navy.vercel.app",
   ...(explicitBaseURL ? [explicitBaseURL] : []),
   ...(vercelOrigin ? [vercelOrigin] : []),
   "https://*.vercel.app",
-  "https://notebook-lm-navy.vercel.app",
+  "http://*.vercel.app",
   ...previewAllowedHosts,
-  ...previewAllowedHosts.flatMap((host) => [`https://${host}`, `http://${host}`]),
+  ...previewAllowedHosts.flatMap((host) => [
+    `https://${host}`,
+    `http://${host}`,
+  ]),
   ...LOCAL_DEV_ORIGINS,
 ];
+
+/** Accept production Vercel / sandbox / localhost origins on credentialed POSTs. */
+function isAllowedDeployOrigin(origin: string): boolean {
+  try {
+    const url = new URL(origin);
+    const host = url.hostname;
+    if (host === "notebook-lm-navy.vercel.app") return true;
+    if (host.endsWith(".vercel.app")) return true;
+    if (host === "localhost" || host === "127.0.0.1" || host === "[::1]") return true;
+    if (host.endsWith(".grok-sandbox.com")) return true;
+    return false;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Origins Better Auth accepts on credentialed POSTs (sign-up / sign-in).
+ * Function form also mirrors the live request Origin when it is a known deploy
+ * host — fixes INVALID_ORIGIN on production email auth.
+ */
+const trustedOrigins = async (request: Request): Promise<string[]> => {
+  const headerOrigin = request.headers.get("origin")?.trim();
+  const referer = request.headers.get("referer")?.trim();
+  const extra: string[] = [];
+  if (headerOrigin && isAllowedDeployOrigin(headerOrigin)) {
+    extra.push(headerOrigin);
+  }
+  if (referer) {
+    try {
+      const refOrigin = new URL(referer).origin;
+      if (isAllowedDeployOrigin(refOrigin)) extra.push(refOrigin);
+    } catch {
+      /* ignore bad referer */
+    }
+  }
+  return [...STATIC_TRUSTED_ORIGINS, ...extra];
+};
 
 const databaseUrl = env("DATABASE_URL");
 
@@ -218,46 +264,53 @@ export const auth = betterAuth({
   // `__Host-` prefixed cookies: the browser REFUSES any same-named cookie that
   // carries a `Domain` attribute, so a sibling `*.grok.me` app cannot "toss" a
   // `Domain=.grok.me` session cookie onto this app. `__Host-` requires Secure +
-  // Path=/ + no Domain; Better Auth otherwise uses `__Secure-` (which permits
-  // Domain), so we drop its auto prefix (`useSecureCookies: false`) and set
-  // Secure + the names ourselves. (Browsers allow Secure cookies on
-  // `http://localhost`, so local dev still works.)
+  // Path=/ + no Domain; we still set those explicitly for clarity.
+  //
+  // `useSecureCookies: false` keeps Better Auth from ALSO applying its default
+  // `__Secure-` prefix — a second prefix would break our exact-name reads below
+  // and in `popup.server.ts`.
   advanced: {
     useSecureCookies: false,
-    defaultCookieAttributes: { secure: true, sameSite: "lax", path: "/" },
+    defaultCookieAttributes: {
+      secure: true,
+      sameSite: "lax",
+      path: "/",
+    },
     cookies: {
       session_token: { name: SESSION_TOKEN_COOKIE },
       session_data: { name: "__Host-grok-auth.session_data" },
-      account_data: { name: "__Host-grok-auth.account_data" }, 
+      account_data: { name: "__Host-grok-auth.account_data" },
       dont_remember: { name: "__Host-grok-auth.dont_remember" },
     },
   },
 
   plugins: [
+    // First so `databaseHooks.session.create.before` sees gate cookies on this
+    // request before any other plugin touches the session.
     gateIdentitySessions(),
-
-    // One genericOAuth provider per upstream (when auth is on), all federating
-    // to the broker with the SAME client and differing only by the `idp` hint.
+    // Only register the broker plugin when we have credentials — an empty
+    // client id produces broken authorization URLs.
     ...(grokOAuthPlugin ? [grokOAuthPlugin] : []),
-
-    // Accept `Authorization: Bearer <session-token>` as an alternative to the
-    // cookie. Needed for the LIVE PREVIEW: the app runs in an embedded iframe
-    // where cookies are partitioned, so after popup sign-in it authenticates with
-    // a bearer token instead (see `client.ts` / the `auth` skill). The hook only
-    // fires when an Authorization header is present, so the cookie path
-    // (deployed apps) is unaffected.
+    // Live-preview iframe clients can't see the session cookie (cross-origin
+    // partitioned iframe); they authenticate with a bearer token instead.
+    // Deployed same-origin clients ignore this and keep using the cookie.
     bearer(),
-
-    // Bridges Better Auth's Set-Cookie into TanStack Start responses. MUST be
-    // last so it runs after every other plugin's hooks.
+    // Must be last: hooks `onRequest`/`onResponse` to commit Set-Cookie via
+    // TanStack Start's cookie APIs on the auth routes themselves. Server
+    // functions that write a session still need their own
+    // `reactStartCookies`-style plugin (see the better-auth TanStack Start docs).
     tanstackStartCookies(),
   ],
 });
 
-export function readSessionToken(): string | null {
-  return getCookie(SESSION_TOKEN_COOKIE) ?? null;
+/**
+ * Read the raw session-token cookie inside a server fn / route handler.
+ * Useful for debugging; prefer `auth.api.getSession` for real authz.
+ */
+export function readSessionTokenCookie(): string | undefined {
+  try {
+    return getCookie(SESSION_TOKEN_COOKIE);
+  } catch {
+    return undefined;
+  }
 }
-
-// Re-exported for convenience; the array lives in the dependency-free
-// `providers.ts` so the client can import it too.
-export { GROK_PROVIDERS } from "./providers";
